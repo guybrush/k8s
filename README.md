@@ -138,6 +138,8 @@ features that would be cool to add (maybe):
 * implement all the things into kubectl (this would be very nice `:D`)
 * support high-availabilty cluster (separate etcd-cluster, multiple
   apiservers that fight for master via raft)
-
+* make all images really small, to speed up everything
+  * [Quest for minimal Docker images](http://william-yeh.github.io/docker-mini/#1)
+  
 this project is free software released under the
 [MIT license](http://www.opensource.org/licenses/mit-license.php)
