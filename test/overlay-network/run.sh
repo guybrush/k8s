@@ -1,6 +1,7 @@
 #!/bin/bash
 
-# TODO
+$DIR = $(dirname ${BASH_SOURCE})
 
-echo "this test will start a simple web-server on one node and
-a web-client on another node"
+cat <<EOF | kubectl create -f -
+
+EOF

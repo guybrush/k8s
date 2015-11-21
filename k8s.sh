@@ -44,8 +44,9 @@ K8S_SERVICE_IP_RANGE=${K8S_SERVICE_IP_RANGE:-"10.2.0.0/16"}
 K8S_DNS_SERVICE_IP=${K8S_DNS_SERVICE_IP:-"10.2.0.10"}
 
 # K8S_IMAGE_HYPERKUBE=${K8S_IMAGE_HYPERKUBE:-"gcr.io/google_containers/hyperkube:v1.1.0"}
-# K8S_IMAGE_HYPERKUBE=${K8S_IMAGE_HYPERKUBE:-"gcr.io/google_containers/hyperkube:v1.1.1"}
+# K8S_IMAGE_HYPERKUBE=${K8S_IMAGE_HYPERKUBE:-"gcr.io/google_containers/hyperkube:v1.1.2"}
 K8S_IMAGE_HYPERKUBE=${K8S_IMAGE_HYPERKUBE:-"guybrush/hyperkube:v1.2.0-alpha.3"}
+# K8S_IMAGE_HYPERKUBE=${K8S_IMAGE_HYPERKUBE:-"guybrush/hyperkube:v1.1.2"}
 K8S_IMAGE_ETCD=${K8S_IMAGE_ETCD:-"gcr.io/google_containers/etcd:2.2.1"}
 K8S_IMAGE_FLANNEL=${K8S_IMAGE_FLANNEL:-"quay.io/coreos/flannel:0.5.3"}
 
@@ -61,6 +62,7 @@ main() {
     echo "wait for apiserver"
     wupio $K8S_CONTROLLER_IP 6443
     kube_up_workers
+    install_k8s_addons
   elif [ "$1" == "kube-down" ]; then
     echo "kube-down: TODO.. currently everything is deleted in kube-up :)"
   elif [ "$1" == "kube-up-controller" ]; then
@@ -75,13 +77,15 @@ main() {
     verify_settings "settings will be overwritten, OK?" "$2"
     setup_kubectl
   elif [ "$1" == "_kube-up-controller" ]; then
-    install_docker
-    install_docker_bootstrap
+    #install_docker
+    #install_docker_bootstrap
     install_k8s_controller "$2" "$3" "$4"
   elif [ "$1" == "_kube-up-worker" ]; then
-    install_docker
-    install_docker_bootstrap
+    #install_docker
+    #install_docker_bootstrap
     install_k8s_worker "$2" "$3" "$4"
+  elif [ "$1" == "deploy-addons" ]; then
+    install_k8s_addons
   else
     echo "$HELP"
   fi
@@ -374,17 +378,39 @@ install_k8s_controller() {
 
   sleep 5
 
+mkdir -p /etc/kubernetes
+  cat <<EOF > /etc/kubernetes/kube-config.yaml
+apiVersion: v1
+kind: Config
+clusters:
+- name: local
+  cluster:
+    certificate-authority: /etc/kubernetes/ssl/kube-ca.pem
+    server: https://$K8S_CONTROLLER_IP:6443
+users:
+- name: kubelet
+  user:
+    client-certificate: /etc/kubernetes/ssl/kube-controller-cert.pem
+    client-key: /etc/kubernetes/ssl/kube-controller-key.pem
+contexts:
+- context:
+    cluster: local
+    user: kubelet
+  name: kubelet-context
+current-context: kubelet-context
+EOF
+  
   cat <<EOF > /etc/kubernetes/etcd-config.json
 {
   "cluster": {
     "machines": [ "https://127.0.0.1:4001" ]
   },
   "config": {
-  "certFile": "/etc/kubernetes/ssl/kube-controller-cert.pem",
-  "keyFile": "/etc/kubernetes/ssl/kube-controller-key.pem",
-  "caCertFiles": [
-  "/etc/kubernetes/ssl/kube-ca.pem"
-  ],
+    "certFile": "/etc/kubernetes/ssl/kube-controller-cert.pem",
+    "keyFile": "/etc/kubernetes/ssl/kube-controller-key.pem",
+    "caCertFiles": [
+      "/etc/kubernetes/ssl/kube-ca.pem"
+    ],
     "timeout": 5000000000,
     "consistency": "WEAK"
   }
@@ -596,13 +622,14 @@ install_k8s_worker() {
   sleep 5
 
   mkdir -p /etc/kubernetes
-  cat <<EOF > /etc/kubernetes/worker-kubeconfig.yaml
+  cat <<EOF > /etc/kubernetes/kube-config.yaml
 apiVersion: v1
 kind: Config
 clusters:
 - name: local
   cluster:
     certificate-authority: /etc/kubernetes/ssl/kube-ca.pem
+    server: https://$K8S_CONTROLLER_IP:6443
 users:
 - name: kubelet
   user:
@@ -629,7 +656,7 @@ EOF
     -v /dev:/dev \
     -v /var/lib/docker/:/var/lib/docker:rw \
     -v /var/lib/kubelet/:/var/lib/kubelet:rw \
-    -v /etc/kubernetes/worker-kubeconfig.yaml:/etc/kubernetes/worker-kubeconfig.yaml:ro \
+    -v /etc/kubernetes/kube-config.yaml:/etc/kubernetes/kube-config.yaml:ro \
     -v /etc/kubernetes/ssl:/etc/kubernetes/ssl:ro \
     -v /etc/kubernetes/manifests-custom:/etc/kubernetes/manifests-custom \
     ${K8S_IMAGE_HYPERKUBE} \
@@ -644,7 +671,7 @@ EOF
     --cluster-domain=cluster.local \
     --tls-cert-file=/etc/kubernetes/ssl/kube-worker-cert.pem \
     --tls-private-key-file=/etc/kubernetes/ssl/kube-worker-key.pem \
-    --kubeconfig=/etc/kubernetes/worker-kubeconfig.yaml \
+    --kubeconfig=/etc/kubernetes/kube-config.yaml \
     --v=2
 
   # https://github.com/kubernetes/kubernetes/blob/master/docs/admin/kube-proxy.md
@@ -655,11 +682,11 @@ EOF
     --restart=always \
     -v /etc/ssl/certs:/usr/share/ca-certificates \
     -v /etc/kubernetes/ssl:/etc/kubernetes/ssl \
-    -v /etc/kubernetes/worker-kubeconfig.yaml:/etc/kubernetes/worker-kubeconfig.yaml \
+    -v /etc/kubernetes/kube-config.yaml:/etc/kubernetes/kube-config.yaml \
     ${K8S_IMAGE_HYPERKUBE} \
     /hyperkube proxy \
     --master=https://$K8S_CONTROLLER_IP:6443 \
-    --kubeconfig=/etc/kubernetes/worker-kubeconfig.yaml \
+    --kubeconfig=/etc/kubernetes/kube-config.yaml \
     --v=2
 }
 
@@ -785,6 +812,10 @@ spec:
         args:
         # command = "/kube2sky"
         - -domain=cluster.local
+        - -kubecfg_file=/etc/kubernetes/kube-config.yaml
+        volumeMounts:
+        - name: etc-kubernetes
+          mountPath: /etc/kubernetes 
       - name: skydns
         image: gcr.io/google_containers/skydns:2015-03-11-001
         resources:
@@ -832,6 +863,9 @@ spec:
       volumes:
       - name: etcd-storage
         emptyDir: {}
+      - name: etc-kubernetes
+        hostPath: 
+          path: /etc/kubernetes
       dnsPolicy: Default
 EOF
 
