@@ -59,7 +59,7 @@ kubectl get rc,pods,svc,ing,secrets --all-namespaces
 
 ## notes
 
-### nodes
+overview
 
 * local-node (from where you setup k8s)
   * files
@@ -115,71 +115,6 @@ kubectl get rc,pods,svc,ing,secrets --all-namespaces
     * docker
       * hyperkube:kubelet
       * hyperkube:proxy
-      
-### addons
-
-#### dns
-
-dns is deployed via a pod with these containers: etcd, kube2sky, skydns, healthz
-
-kube2sky needs to connect to the api-server which is ssl-secured and thus
-must be configured with the flag `-kubecfg_file` (see https://github.com/kubernetes/kubernetes/tree/bd1c26c/cluster/addons/dns/kube2sky#flags)
-
-in order to make this work on every node (k8s will put the pod on any node
-it sees fit) it is important that the filename and location of 
-`/etc/kubernetes/kube-config.yaml` is the same on every node. that way
-we can use a dns-pod like this (excerpt):
-
-```
-apiVersion: v1
-kind: ReplicationController
-spec:
-  template:
-    spec:
-      containers:
-      - name: kube2sky
-        image: gcr.io/google_containers/kube2sky:1.11
-        resources:
-          limits:
-            cpu: 100m
-            memory: 50Mi
-        args:
-        - -domain=cluster.local
-        - -kubecfg_file=/etc/kubernetes/kube-config.yaml
-        volumeMounts:
-        - name: etc-kubernetes
-          mountPath: /etc/kubernetes
-      volumes:
-      - name: etc-kubernetes
-        hostPath: 
-          path: /etc/kubernete
-```
-
-so on every node there has to be a `/etc/kubernetes/kube-config.yaml` that
-looks like this:
-
-```
-apiVersion: v1
-kind: Config
-clusters:
-- name: local
-  cluster:
-    certificate-authority: /etc/kubernetes/ssl/kube-ca.pem
-    server: https://$K8S_CONTROLLER_IP:6443
-users:
-- name: kubelet
-  user:
-    client-certificate: /etc/kubernetes/ssl/kube-worker-cert.pem
-    client-key: /etc/kubernetes/ssl/kube-worker-key.pem
-contexts:
-- context:
-    cluster: local
-    user: kubelet
-  name: kubelet-context
-current-context: kubelet-context
-```
-
-### other things
 
 things i dont fully understand yet:
 

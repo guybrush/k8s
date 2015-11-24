@@ -52,7 +52,7 @@ Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
 
     controller.vm.network :private_network, ip: "172.17.4.100"
 
-    # config.vm.synced_folder ".", "/vagrant_data"
+    config.vm.synced_folder ".", "/vagrant_data"
 
     # http://foo-o-rama.com/vagrant--stdin-is-not-a-tty--fix.html
     config.vm.provision "fix-no-tty", type: "shell" do |s|
@@ -103,15 +103,18 @@ EOOOOOF
 
 cat <<EOOOOOF > /home/vagrant/provision.sh
 #!/bin/bash
-export K8S_CONTROLLER=vagrant@172.17.4.100/eth0
-export K8S_WORKERS=vagrant@172.17.4.101/eth0
+export K8S_CONTROLLER=vagrant@172.17.4.100/eth1
+export K8S_WORKERS=vagrant@172.17.4.101/eth1
+export K8S_FLANNEL_NETWORK=10.1.0.0/16
+export K8S_SERVICE_IP_RANGE=10.2.0.0/16
+export K8S_DNS_SERVICE_IP=10.2.0.10
 /home/vagrant/k8s.sh init-ssl -y
 /home/vagrant/k8s.sh kube-up -y
 /home/vagrant/k8s.sh install-kubectl
 /home/vagrant/k8s.sh setup-kubectl -y
 kubectl cluster-info
 kubectl get nodes
-kubectl get rc,pods,svc,secrets --all-namespaces
+kubectl get rc,pods,svc,secrets,ns --all-namespaces
 EOOOOOF
 
 chmod +x /home/vagrant/k8s.sh

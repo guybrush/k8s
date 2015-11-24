@@ -1,5 +1,5 @@
 #!/bin/bash
-
+#v2
 set -e
 
 HELP="deploy k8s remotely in containers via ssh and scp
@@ -36,17 +36,32 @@ further information: https://github.com/guybrush/k8s
 ################################################################################
 
 # <user>@<ip>/<flannel-interface>
-K8S_CONTROLLER=${K8S_CONTROLLER:-"vagrant@10.0.0.201/eth1"}
-K8S_WORKERS=${K8S_WORKERS:-"vagrant@10.0.0.202/eth1 vagrant@10.0.0.203/eth1"}
+K8S_CONTROLLER=${K8S_WORKERS:-"vagrant@10.0.0.201/eth1"}
+# K8S_WORKERS=${K8S_WORKERS:-"vagrant@10.0.0.202/eth1 vagrant@10.0.0.203/eth1"}
+K8S_WORKERS=${K8S_WORKERS:-"vagrant@10.0.0.202/eth1"}
+
+# K8S_CONTROLLER=${K8S_CONTROLLER:-"vagrant@172.17.4.100/eth1"}
+# K8S_WORKERS=${K8S_WORKERS:-"vagrant@172.17.4.101/eth1"}
 
 K8S_FLANNEL_NETWORK=${K8S_FLANNEL_NETWORK:-"10.1.0.0/16"}
 K8S_SERVICE_IP_RANGE=${K8S_SERVICE_IP_RANGE:-"10.2.0.0/16"}
 K8S_DNS_SERVICE_IP=${K8S_DNS_SERVICE_IP:-"10.2.0.10"}
 
+# K8S_FLANNEL_NETWORK=${K8S_FLANNEL_NETWORK:-"172.16.1.0/24"}
+# K8S_SERVICE_IP_RANGE=${K8S_SERVICE_IP_RANGE:-"172.16.2.0/24"}
+# K8S_DNS_SERVICE_IP=${K8S_DNS_SERVICE_IP:-"172.16.2.10"}
+
+# K8S_FLANNEL_NETWORK=${K8S_FLANNEL_NETWORK:-"10.16.0.0/16"}
+# K8S_SERVICE_IP_RANGE=${K8S_SERVICE_IP_RANGE:-"10.0.0.0/24"}
+# K8S_DNS_SERVICE_IP=${K8S_DNS_SERVICE_IP:-"10.0.0.10"}
+
+K8S_PROXY_MODE=${K8S_PROXY_MODE:-"iptables"}
+
 # K8S_IMAGE_HYPERKUBE=${K8S_IMAGE_HYPERKUBE:-"gcr.io/google_containers/hyperkube:v1.1.0"}
 # K8S_IMAGE_HYPERKUBE=${K8S_IMAGE_HYPERKUBE:-"gcr.io/google_containers/hyperkube:v1.1.2"}
-K8S_IMAGE_HYPERKUBE=${K8S_IMAGE_HYPERKUBE:-"guybrush/hyperkube:v1.2.0-alpha.3"}
-# K8S_IMAGE_HYPERKUBE=${K8S_IMAGE_HYPERKUBE:-"guybrush/hyperkube:v1.1.2"}
+# K8S_IMAGE_HYPERKUBE=${K8S_IMAGE_HYPERKUBE:-"guybrush/hyperkube:v1.2.0-alpha.3"}
+
+K8S_IMAGE_HYPERKUBE=${K8S_IMAGE_HYPERKUBE:-"guybrush/hyperkube:v1.1.2"}
 K8S_IMAGE_ETCD=${K8S_IMAGE_ETCD:-"gcr.io/google_containers/etcd:2.2.1"}
 K8S_IMAGE_FLANNEL=${K8S_IMAGE_FLANNEL:-"quay.io/coreos/flannel:0.5.3"}
 
@@ -73,16 +88,18 @@ main() {
     kube_up_workers
   elif [ "$1" == "install-kubectl" ]; then
     install_kubectl
+  elif [ "$1" == "install-docker" ]; then
+    install_docker
   elif [ "$1" == "setup-kubectl" ]; then
     verify_settings "settings will be overwritten, OK?" "$2"
     setup_kubectl
   elif [ "$1" == "_kube-up-controller" ]; then
-    #install_docker
-    #install_docker_bootstrap
+    install_docker
+    install_docker_bootstrap
     install_k8s_controller "$2" "$3" "$4"
   elif [ "$1" == "_kube-up-worker" ]; then
-    #install_docker
-    #install_docker_bootstrap
+    install_docker
+    install_docker_bootstrap
     install_k8s_worker "$2" "$3" "$4"
   elif [ "$1" == "deploy-addons" ]; then
     install_k8s_addons
@@ -143,6 +160,7 @@ verify_settings() {
   echo K8S_IMAGE_HYPERKUBE=$K8S_IMAGE_HYPERKUBE
   echo K8S_IMAGE_ETCD=$K8S_IMAGE_ETCD
   echo K8S_IMAGE_FLANNEL=$K8S_IMAGE_FLANNEL
+  echo K8S_PROXY_MODE=$K8S_PROXY_MODE
   echo "------------------------------------------------"
   # print nice table of parsed values
   local layout="%-11s %-${max_user}s %-${max_ip}s %-${max_iface}s\n"
@@ -223,31 +241,67 @@ chmod +x ./k8s.sh && \
 ################################################################################
 
 install_docker() {
+  echo "------------------------------------------------------------------------"
+  echo "install_docker"
+  echo "------------------------------------------------------------------------"
   apt-get update
-  apt-get install -y git apt-transport-https
+  apt-get install -y apt-transport-https
 
   apt-key adv --keyserver hkp://pgp.mit.edu:80 --recv-keys 58118E89F3A912897C070ADBF76221572C52609D
 
   cat << EOF > /etc/apt/sources.list.d/docker.list
 # Debian Wheezy
-deb https://apt.dockerproject.org/repo debian-wheezy main
+# deb https://apt.dockerproject.org/repo debian-wheezy main
 # Debian Jessie
 deb https://apt.dockerproject.org/repo debian-jessie main
 # Debian Stretch/Sid
-deb https://apt.dockerproject.org/repo debian-stretch main
+# deb https://apt.dockerproject.org/repo debian-stretch main
 EOF
 
   apt-get update
-  apt-get install -y docker-engine
+  # apt-get purge -y docker-engine
+  # apt-get install -y --force-yes docker-engine=1.8.3-0~jessie
+  apt-get install -y --force-yes docker-engine=1.9.1-0~jessie
+
+  # https://github.com/docker/docker/issues/9889
+  # cp /lib/systemd/system/docker.service /etc/systemd/system/docker.service
+  # rm /lib/systemd/system/docker.service
+
+  systemctl cat docker
+
+  cat <<EOF > /etc/systemd/system/docker.service
+[Unit]
+Description=Docker Application Container Engine
+Documentation=https://docs.docker.com
+After=network.target docker.socket
+Requires=docker.socket
+
+[Service]
+Type=notify
+EnvironmentFile=-/etc/default/docker
+ExecStart=
+ExecStart=/usr/bin/docker daemon -H fd:// \$DOCKER_OPTS
+MountFlags=slave
+LimitNOFILE=1048576
+LimitNPROC=1048576
+LimitCORE=infinity
+
+[Install]
+WantedBy=multi-user.target
+EOF
 
   systemctl daemon-reload
   systemctl start docker
+  systemctl disable docker
   systemctl enable docker
 }
 
 ################################################################################
 
 install_docker_bootstrap() {
+  echo "------------------------------------------------------------------------"
+  echo "install_docker_bootstrap"
+  echo "------------------------------------------------------------------------"
   # sudo -b docker -d -H unix:///var/run/docker-bootstrap.sock \
   #  -p /var/run/docker-bootstrap.pid --iptables=false --ip-masq=false \
   #   --bridge=none --graph=/var/lib/docker-bootstrap 2> /var/log/docker-bootstrap.log 1> /dev/null
@@ -280,6 +334,7 @@ EOF
 
   systemctl daemon-reload
   systemctl start docker-bootstrap
+  systemctl disable docker-bootstrap
   systemctl enable docker-bootstrap
 }
 
@@ -370,12 +425,12 @@ install_k8s_controller() {
   source subnet.env
 
   DOCKER_CONF="/etc/default/docker"
-  echo "DOCKER_OPTS=\"\$DOCKER_OPTS --mtu=${FLANNEL_MTU} --bip=${FLANNEL_SUBNET}\"" | sudo tee -a ${DOCKER_CONF}
+  # echo "DOCKER_OPTS=\"\$DOCKER_OPTS --mtu=${FLANNEL_MTU} --bip=${FLANNEL_SUBNET}\"" | sudo tee -a ${DOCKER_CONF}
+  echo "DOCKER_OPTS=\"--mtu=${FLANNEL_MTU} --bip=${FLANNEL_SUBNET}\"" | sudo tee -a ${DOCKER_CONF}
   ifconfig docker0 down
   apt-get install -y bridge-utils
   brctl delbr docker0
   service docker restart
-
   sleep 5
 
 mkdir -p /etc/kubernetes
@@ -399,7 +454,7 @@ contexts:
   name: kubelet-context
 current-context: kubelet-context
 EOF
-  
+
   cat <<EOF > /etc/kubernetes/etcd-config.json
 {
   "cluster": {
@@ -462,6 +517,7 @@ spec:
     - apiserver
     - --bind-address=0.0.0.0
     - --secure-port=6443
+    # - --etcd-servers=http://127.0.0.1:4001
     - --etcd-config=/etc/kubernetes/etcd-config.json
     - --allow-privileged=true
     - --service-cluster-ip-range=${K8S_SERVICE_IP_RANGE}
@@ -558,6 +614,7 @@ EOF
     ${K8S_IMAGE_HYPERKUBE} \
     /hyperkube proxy \
     --master=http://127.0.0.1:8080 \
+    --proxy-mode=$K8S_PROXY_MODE \
     --v=2
 }
 
@@ -599,8 +656,7 @@ install_k8s_worker() {
       --etcd-keyfile=/etc/kubernetes/ssl/kube-worker-key.pem \
       --etcd-certfile=/etc/kubernetes/ssl/kube-worker-cert.pem \
       --etcd-cafile=/etc/kubernetes/ssl/kube-ca.pem \
-      --iface="$LOCAL_FLANNEL_IFACE"\
-  )
+      --iface="$LOCAL_FLANNEL_IFACE" )
 
   sleep 5
 
@@ -613,7 +669,8 @@ install_k8s_worker() {
   source subnet.env
 
   DOCKER_CONF="/etc/default/docker"
-  echo "DOCKER_OPTS=\"\$DOCKER_OPTS --mtu=${FLANNEL_MTU} --bip=${FLANNEL_SUBNET}\"" | sudo tee -a ${DOCKER_CONF}
+  # echo "DOCKER_OPTS=\"\$DOCKER_OPTS --mtu=${FLANNEL_MTU} --bip=${FLANNEL_SUBNET}\"" | sudo tee -a ${DOCKER_CONF}
+  echo "DOCKER_OPTS=\"--mtu=${FLANNEL_MTU} --bip=${FLANNEL_SUBNET}\"" | sudo tee -a ${DOCKER_CONF}
   ifconfig docker0 down
   apt-get install -y bridge-utils
   brctl delbr docker0
@@ -661,6 +718,7 @@ EOF
     -v /etc/kubernetes/manifests-custom:/etc/kubernetes/manifests-custom \
     ${K8S_IMAGE_HYPERKUBE} \
     /hyperkube kubelet \
+    --containerized \
     --api-servers=https://$K8S_CONTROLLER_IP:6443 \
     --address=0.0.0.0 \
     --enable-server \
@@ -687,6 +745,7 @@ EOF
     /hyperkube proxy \
     --master=https://$K8S_CONTROLLER_IP:6443 \
     --kubeconfig=/etc/kubernetes/kube-config.yaml \
+    --proxy-mode=$K8S_PROXY_MODE \
     --v=2
 }
 
@@ -695,7 +754,7 @@ EOF
 install_kubectl() {
   # it would be cool to have kubectl inside hyperkube..
   # apt-get install -y curl
-  local V="1.1.1"
+  local V="1.1.2"
   curl https://storage.googleapis.com/kubernetes-release/release/v$V/bin/linux/amd64/kubectl -o kubectl
   sudo mv kubectl /usr/local/bin/kubectl
   sudo chmod +x /usr/local/bin/kubectl
@@ -812,12 +871,12 @@ spec:
         args:
         # command = "/kube2sky"
         - -domain=cluster.local
-        - -kubecfg_file=/etc/kubernetes/kube-config.yaml
-        volumeMounts:
-        - name: etc-kubernetes
-          mountPath: /etc/kubernetes 
+        # - -kubecfg_file=/etc/kubernetes/kube-config.yaml
+        # volumeMounts:
+        # - name: etc-kubernetes
+        #   mountPath: /etc/kubernetes
       - name: skydns
-        image: gcr.io/google_containers/skydns:2015-03-11-001
+        image: gcr.io/google_containers/skydns:2015-10-13-8c72f8c
         resources:
           limits:
             cpu: 100m
@@ -826,6 +885,7 @@ spec:
         # command = "/skydns"
         - -machines=http://localhost:4001
         - -addr=0.0.0.0:53
+        - -ns-rotate=false
         - -domain=cluster.local.
         ports:
         - containerPort: 53
@@ -863,9 +923,9 @@ spec:
       volumes:
       - name: etcd-storage
         emptyDir: {}
-      - name: etc-kubernetes
-        hostPath: 
-          path: /etc/kubernetes
+      # - name: etc-kubernetes
+      #   hostPath:
+      #     path: /etc/kubernetes
       dnsPolicy: Default
 EOF
 
